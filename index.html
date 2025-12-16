@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Tap Trials</title>
+
+<link rel="icon" type="image/png" sizes="512x512" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Tap Trials">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#4ade80">
+
+<style>
+:root { --bg:#0f1220; --panel:#181c3a; --accent:#4ade80; --accent2:#60a5fa; --danger:#ef4444; --text:#e5e7eb; }
+* { box-sizing:border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; }
+body { margin:0; background:var(--bg); color:var(--text); text-align:center; }
+h1 { margin:10px 0; }
+button { background:var(--accent); border:none; padding:12px; border-radius:10px; font-size:16px; cursor:pointer; margin:5px; }
+button:disabled { opacity:0.4; cursor:not-allowed; }
+.panel { background:var(--panel); margin:10px; padding:15px; border-radius:15px; }
+.tabs button { background:var(--accent2); }
+.hidden { display:none; }
+.upgrade { display:flex; justify-content:space-between; align-items:center; margin:8px 0; background:#0b0f2a; padding:10px; border-radius:10px; }
+input { padding:10px; border-radius:8px; border:none; width:80%; margin:5px 0; }
+.leaderboard-entry { display:flex; justify-content:space-between; }
+#tapButton { font-size:48px; padding:30px 50px; border-radius:20px; background:var(--accent); color:var(--text); transition: transform 0.1s; }
+#tapButton:active { transform: scale(0.95); }
+#bossHealthBar { width:100%; height:20px; background:#444; border-radius:10px; margin:10px 0; }
+#bossHealth { height:100%; background:#ef4444; border-radius:10px; width:100%; }
+#loadingScreen {
+  position:fixed; top:0; left:0; width:100%; height:100%; background:#0f1220;
+  color:#fff; display:flex; justify-content:center; align-items:center; flex-direction:column; z-index:9999;
+}
+#loadingScreen img { width:150px; margin-bottom:20px; }
+#toast {
+  position:fixed; top:20px; left:50%; transform:translateX(-50%);
+  background:var(--accent); color:#fff; padding:10px 20px; border-radius:10px; display:none; z-index:10000; font-weight:bold;
+}
+</style>
+</head>
+<body>
+
+<!-- Loading Screen -->
+<div id="loadingScreen">
+  <img src="icon.png" alt="Tap Trials Logo">
+  <h1>Tap Trials</h1>
+  <p>Loading...</p>
+</div>
+
+<div id="toast"></div>
+<audio id="achievementSound" src="achievement.mp3" preload="auto"></audio>
+
+<h1>🔥 Tap Trials</h1>
+
+<div class="panel">
+  <div>Player: <b id="playerName"></b></div>
+  <button onclick="changeName()">Change Name</button>
+</div>
+
+<div class="panel">
+  <h2>Clicks</h2>
+  <h1 id="clicks">0</h1>
+  <button id="tapButton" onclick="manualClick()">CLICK</button>
+  <div>Click Power: <span id="clickPower">1</span></div>
+  <div>Auto CPS: <span id="cps">0</span></div>
+</div>
+
+<div class="panel tabs">
+  <button onclick="showTab('click')">Click Power</button>
+  <button onclick="showTab('auto')">Auto</button>
+  <button onclick="showTab('multi')">Multipliers</button>
+  <button onclick="showTab('prestige')">Prestige</button>
+  <button onclick="showTab('boss')">Boss Fight</button>
+  <button onclick="showTab('achievements')">Achievements</button>
+  <button onclick="showTab('leader')">Leaderboard</button>
+</div>
+
+<div class="panel" id="tab-click"><h2>Click Power Upgrades</h2><div id="clickUpgrades"></div></div>
+<div class="panel hidden" id="tab-auto"><h2>Auto Clickers</h2><div id="autoUpgrades"></div></div>
+<div class="panel hidden" id="tab-multi"><h2>Multipliers</h2><div id="multiUpgrades"></div></div>
+<div class="panel hidden" id="tab-prestige">
+  <h2>Prestige</h2>
+  <p>Prestige Level: <b id="prestigeLevel">0</b></p>
+  <p>Prestige Bonus: +<span id="prestigeBonus">0</span>%</p>
+  <button style="background:var(--danger)" onclick="prestige()">PRESTIGE RESET</button>
+</div>
+
+<div class="panel hidden" id="tab-boss">
+  <h2>Boss Fight</h2>
+  <div id="bossInfo">A wild boss appears!</div>
+  <div id="bossHealthBar"><div id="bossHealth"></div></div>
+  <button id="attackBoss" onclick="attackBoss()">Attack Boss</button>
+  <p>Boss Rewards: <span id="bossReward">0</span> clicks</p>
+</div>
+
+<div class="panel hidden" id="tab-achievements">
+  <h2>Achievements</h2>
+  <ul id="achievementsList"></ul>
+</div>
+
+<div class="panel hidden" id="tab-leader">
+  <h2>Leaderboard</h2>
+  <button onclick="generateCode()">Generate Share Code</button>
+  <p id="shareCode"></p>
+  <input id="codeInput" placeholder="Paste friend code">
+  <button onclick="addCode()">Add</button>
+  <div id="leaderboard"></div>
+</div>
+
+<script>
+let data = JSON.parse(localStorage.getItem("clickerSave")) || {
+  name:"", clicks:0, clickPower:1, cps:0, prestige:0, leaders:[], lastTime:Date.now(),
+  bossesDefeated:0, achievements:[]
+};
+if(!data.name){ data.name = prompt("Enter your name:"); save(); }
+
+let now = Date.now();
+let diff = Math.floor((now - data.lastTime)/1000);
+let maxOffline = 60*60*8;
+diff = Math.min(diff,maxOffline);
+if(diff > 5 && data.cps>0){
+  let earned = diff*data.cps;
+  alert(`Welcome back!\nYou earned ${earned} clicks while offline.`);
+  data.clicks += earned;
+}
+
+// Dynamic Upgrades
+const clickUpgrades = [];
+let clickBase=10, clickPower=1;
+for(let i=0;i<50;i++){
+  clickUpgrades.push({name:`+${clickPower.toLocaleString()} Clicks`, cost:clickBase, power:clickPower});
+  clickBase = Math.floor(clickBase*1.8); clickPower = Math.floor(clickPower*1.5);
+}
+const autoUpgrades = [];
+let autoBase=50, autoCPS=1;
+for(let i=0;i<50;i++){
+  autoUpgrades.push({name:`Auto ${i+1}`, cost:autoBase, cps:autoCPS});
+  autoBase = Math.floor(autoBase*2); autoCPS = Math.floor(autoCPS*1.5);
+}
+const multiUpgrades = [];
+let multiBase=1000, multiPower=2;
+for(let i=0;i<50;i++){
+  multiUpgrades.push({name:`x${multiPower} Power`, cost:multiBase, mult:multiPower, minClicks:multiBase*0.5});
+  multiBase = Math.floor(multiBase*3); multiPower += 1;
+}
+
+// Boss
+let boss = {hp:10000, maxHp:10000, reward:5000};
+
+// Achievements
+const achievements = [
+  {name:"First Click", desc:"Make your first click", check:()=>data.clicks>=1, reward:{clicks:50}, unlocked:false},
+  {name:"Click Novice", desc:"Reach 1,000 clicks", check:()=>data.clicks>=1000, reward:{clicks:500, clickPower:1}, unlocked:false},
+  {name:"Click Master", desc:"Reach 10,000 clicks", check:()=>data.clicks>=10000, reward:{clicks:5000, clickPower:5}, unlocked:false},
+  {name:"Auto Addict", desc:"Reach 500 CPS", check:()=>data.cps>=500, reward:{clicks:10000, cps:5}, unlocked:false},
+  {name:"Boss Slayer", desc:"Defeat 5 bosses", check:()=>data.bossesDefeated>=5, reward:{clicks:25000}, unlocked:false},
+  {name:"Prestige Beginner", desc:"Reach Prestige 5", check:()=>data.prestige>=5, reward:{clickPower:10}, unlocked:false}
+];
+
+function save(){ data.lastTime=Date.now(); localStorage.setItem("clickerSave", JSON.stringify(data)); }
+function manualClick(){ let multiplier=1+data.prestige*0.1; data.clicks+=data.clickPower*multiplier; attackBossOnClick(data.clickPower*multiplier); update(); }
+function update(){
+  document.getElementById("clicks").textContent=Math.floor(data.clicks);
+  document.getElementById("clickPower").textContent=data.clickPower;
+  document.getElementById("cps").textContent=data.cps;
+  document.getElementById("playerName").textContent=data.name;
+  document.getElementById("prestigeLevel").textContent=data.prestige;
+  document.getElementById("prestigeBonus").textContent=data.prestige*10;
+  renderUpgrades(); renderLeaderboard(); renderBoss(); renderAchievements();
+  save();
+}
+
+function renderUpgrades(){
+  document.getElementById("clickUpgrades").innerHTML="";
+  clickUpgrades.forEach(u=>{
+    let d=document.createElement("div"); d.className="upgrade";
+    d.innerHTML=`${u.name} (${u.cost}) <button ${data.clicks<u.cost?"disabled":""}>Buy</button>`;
+    d.querySelector("button").onclick=()=>{data.clicks-=u.cost; data.clickPower+=u.power; u.cost=Math.floor(u.cost*1.8); update();};
+    document.getElementById("clickUpgrades").appendChild(d);
+  });
+
+  document.getElementById("autoUpgrades").innerHTML="";
+  autoUpgrades.forEach(u=>{
+    let d=document.createElement("div"); d.className="upgrade";
+    d.innerHTML=`${u.name} (${u.cost}) <button ${data.clicks<u.cost?"disabled":""}>Buy</button>`;
+    d.querySelector("button").onclick=()=>{data.clicks-=u.cost; data.cps+=u.cps; u.cost=Math.floor(u.cost*2); update();};
+    document.getElementById("autoUpgrades").appendChild(d);
+  });
+
+  document.getElementById("multiUpgrades").innerHTML="";
+  multiUpgrades.forEach(u=>{
+    let d=document.createElement("div"); d.className="upgrade";
+    let unlocked = !u.minClicks || data.clicks>=u.minClicks;
+    d.innerHTML=`${u.name} (${u.cost}) <button ${data.clicks<u.cost || !unlocked?"disabled":""}>Buy</button>`;
+    d.querySelector("button").onclick=()=>{data.clicks-=u.cost; data.clickPower*=u.mult; u.cost=Math.floor(u.cost*3); update();};
+    document.getElementById("multiUpgrades").appendChild(d);
+  });
+}
+
+function prestige(){ if(confirm("Reset progress for permanent bonuses?")){ data.clicks=0; data.clickPower=1; data.cps=0; data.prestige++; update(); } }
+function generateCode(){ document.getElementById("shareCode").textContent=btoa(JSON.stringify({n:data.name,s:Math.floor(data.clicks)})); }
+function addCode(){ try{ let obj=JSON.parse(atob(document.getElementById("codeInput").value)); data.leaders.push(obj); update(); }catch{} }
+function renderLeaderboard(){ let div=document.getElementById("leaderboard"); div.innerHTML=""; [...data.leaders,{n:data.name,s:Math.floor(data.clicks)}].sort((a,b)=>b.s-a.s).forEach(e=>{let d=document.createElement("div"); d.className="leaderboard-entry"; d.innerHTML=`<span>${e.n}</span><span>${e.s}</span>`; div.appendChild(d);});}
+function showTab(t){ ["click","auto","multi","prestige","boss","achievements","leader"].forEach(x=>{document.getElementById("tab-"+x).classList.add("hidden");}); document.getElementById("tab-"+t).classList.remove("hidden"); }
+function changeName(){ data.name=prompt("New name:"); update(); }
+
+setInterval(()=>{ data.clicks+=data.cps; attackBossOnClick(data.cps); update(); },1000);
+
+// Boss
+function renderBoss(){ document.getElementById("bossHealth").style.width=Math.max(0,(boss.hp/boss.maxHp*100))+"%"; document.getElementById("bossReward").textContent=boss.reward; if(boss.hp<=0) bossDefeated(); }
+function attackBoss(){ boss.hp-=data.clickPower*(1+data.prestige*0.1); renderBoss(); }
+function attackBossOnClick(amount){ boss.hp-=amount*0.1; renderBoss(); }
+function bossDefeated(){ data.clicks+=boss.reward; data.bossesDefeated++; showToast("Boss Defeated!"); boss.maxHp=Math.floor(boss.maxHp*1.5); boss.hp=boss.maxHp; boss.reward=Math.floor(boss.reward*1.5); update(); }
+
+// Achievements
+function renderAchievements(){
+  let ul = document.getElementById("achievementsList");
+  ul.innerHTML = "";
+  achievements.forEach(a => {
+    if(a.check() && !a.unlocked){
+      if(a.reward.clicks) data.clicks += a.reward.clicks;
+      if(a.reward.clickPower) data.clickPower += a.reward.clickPower;
+      if(a.reward.cps) data.cps += a.reward.cps;
+      a.unlocked = true;
+      const audio = document.getElementById("achievementSound");
+      if(audio){ audio.currentTime=0; audio.play(); }
+      showToast(`Achievement Unlocked: ${a.name}`);
+    }
+    let li = document.createElement("li");
+    li.textContent = `${a.name}: ${a.desc} ${a.unlocked?"✅":""}`;
+    ul.appendChild(li);
+  });
+}
+
+// Toast notifications
+function showToast(msg){
+  const toast = document.getElementById("toast");
+  toast.textContent = msg;
+  toast.style.display="block";
+  setTimeout(()=>{toast.style.display="none";},2000);
+}
+
+// Loading screen fade
+window.addEventListener("load", () => { 
+  const screen=document.getElementById("loadingScreen"); 
+  if(screen){ screen.style.transition="opacity 1s"; screen.style.opacity=0; setTimeout(()=>screen.style.display="none",1000); }
+});
+
+update();
+</script>
+</body>
+</html>
